@@ -6,23 +6,53 @@ import CarbonEstimatorTab from "@/components/dashboard/carbon-estimator-tab";
 import InstructionsTab from "@/components/dashboard/instructions-tab";
 import { useState, useEffect } from "react";
 import type { WasteEntry, BinStatus } from "@/lib/types";
-import { initialWasteLog, generateNewWasteEntry, calculateBinStatus } from "@/lib/mock-data";
+import { db } from "@/lib/firebase";
+import { collection, onSnapshot, query, orderBy, Timestamp } from "firebase/firestore";
+
+const MAX_CAPACITY_KG = 50;
+
+const calculateBinStatus = (log: WasteEntry[]): BinStatus => {
+  const totalWeight = log.reduce((sum, entry) => sum + entry.weight, 0);
+  const capacity = Math.min(100, (totalWeight / MAX_CAPACITY_KG) * 100);
+  let status: "Fill" | "Empty" | "In Use";
+  if (capacity > 80) {
+    status = "Fill";
+  } else if (capacity < 20) {
+    status = "Empty";
+  } else {
+    status = "In Use";
+  }
+
+  return {
+    totalWeight: parseFloat(totalWeight.toFixed(2)),
+    capacity: parseFloat(capacity.toFixed(2)),
+    status,
+    maxCapacity: MAX_CAPACITY_KG,
+  };
+};
 
 export default function Dashboard() {
-  const [wasteLog, setWasteLog] = useState<WasteEntry[]>(initialWasteLog);
-  const [binStatus, setBinStatus] = useState<BinStatus>(calculateBinStatus(initialWasteLog));
+  const [wasteLog, setWasteLog] = useState<WasteEntry[]>([]);
+  const [binStatus, setBinStatus] = useState<BinStatus>(calculateBinStatus([]));
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setWasteLog((prevLog) => {
-        const newEntry = generateNewWasteEntry(prevLog);
-        const newLog = [newEntry, ...prevLog];
-        setBinStatus(calculateBinStatus(newLog));
-        return newLog;
+    const q = query(collection(db, "wasteLog"), orderBy("timestamp", "desc"));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const newLog: WasteEntry[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        newLog.push({
+          id: doc.id,
+          type: data.type,
+          weight: data.weight,
+          timestamp: (data.timestamp as Timestamp).toDate(),
+        });
       });
-    }, 10000); // Add new data every 10 seconds to simulate real-time updates
+      setWasteLog(newLog);
+      setBinStatus(calculateBinStatus(newLog));
+    });
 
-    return () => clearInterval(interval);
+    return () => unsubscribe();
   }, []);
 
   return (
